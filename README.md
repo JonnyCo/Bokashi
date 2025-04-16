@@ -1,1 +1,1 @@
-![BokashiRave](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExaHRvMDdkdzM4OW5qNWYwcGExNDFnYWtyN3N4N3g2dGRrMGN4cG5lbCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/kQPUGG8OepVD5PWOXR/giphy.gif)
+![BokashiRave](./docs/bokashi.gif)
