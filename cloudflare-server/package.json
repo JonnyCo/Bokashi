@@ -11,20 +11,25 @@
 		"gen": "drizzle-kit generate",
 		"migrate": "npx wrangler d1 migrations apply bokashi-db --remote",
 		"push": "drizzle-kit push",
-		"studio": "drizzle-kit studio"
+		"studio": "drizzle-kit studio",
+		"db:seed": "tsx seed.ts"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.7.5",
 		"@cloudflare/workers-types": "^4.20250417.0",
 		"@types/node": "^22.14.1",
+		"dotenv": "^16.5.0",
 		"drizzle-kit": "^0.31.0",
+		"tsx": "^4.19.3",
 		"typescript": "^5.5.2",
 		"vitest": "~3.0.7",
 		"wrangler": "^4.12.0"
 	},
 	"dependencies": {
+		"@cloudflare/d1": "^1.0.0",
 		"better-sqlite3": "^11.9.1",
 		"drizzle-orm": "^0.42.0",
+		"drizzle-seed": "^0.3.1",
 		"hono": "^4.7.7"
 	}
 }

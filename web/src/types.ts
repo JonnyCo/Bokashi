@@ -14,6 +14,7 @@ export interface SensorData {
   ir: number | null;
   conductivity: number | null;
   camera?: string | null; // Optional camera status/data
+  imageUrl?: string | null; // Add nullable text column for image URL
 }
 
 // Type for historical data points used in charts

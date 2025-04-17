@@ -1,5 +1,7 @@
 import type { SensorData } from "../types"; // Import shared type
-import type { SensorDataCallback } from "./bluetoothService"; // Import callback type
+
+// Define the callback type
+type SensorDataCallback = (data: Partial<SensorData>) => void;
 
 let simulationInterval: number | null = null;
 

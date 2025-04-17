@@ -1,35 +1,41 @@
 import { create } from "zustand";
 import type { SensorData, HistoricalDataPoint } from "../types";
-import { generateHistoricalData } from "../utils/mockData"; // Assuming generateHistoricalData is moved
 
 // Define the state shape
 interface SensorState {
   currentSensorData: SensorData;
   historicalData: HistoricalDataPoint[];
-  isConnected: boolean;
   isSimulating: boolean;
-  isLoading: boolean;
+  isLoading: boolean; // Loading state for polling/simulation
+  isInitialLoading: boolean; // Separate loading state for initial historical fetch
   error: string | null;
   activeFilter: string;
 
   // Actions
-  setData: (data: Partial<SensorData>) => void;
+  setData: (data: Partial<SensorData>) => void; // For polled/simulated single updates
+  setHistoricalData: (data: HistoricalDataPoint[]) => void; // For initial bulk load
   startLoading: () => void;
   stopLoading: () => void;
   setError: (error: string | null) => void;
-  setConnected: (status: boolean) => void;
   setSimulating: (status: boolean) => void;
   setActiveFilter: (filter: string) => void;
-  resetState: () => void; // Optional: Action to reset state
+  resetState: () => void;
 }
+
+// Calculate max points based on 5-second polling over 24 hours
+const POLLING_INTERVAL_SECONDS = 5;
+const SECONDS_IN_DAY = 24 * 60 * 60;
+const MAX_HISTORICAL_POINTS = Math.ceil(
+  SECONDS_IN_DAY / POLLING_INTERVAL_SECONDS
+);
 
 const initialSensorState: Omit<
   SensorState,
   | "setData"
+  | "setHistoricalData" // Add new action
   | "startLoading"
   | "stopLoading"
   | "setError"
-  | "setConnected"
   | "setSimulating"
   | "setActiveFilter"
   | "resetState"
@@ -45,12 +51,13 @@ const initialSensorState: Omit<
     ir: null,
     conductivity: null,
     camera: null,
+    imageUrl: null, // Ensure imageUrl is here
     timestamp: undefined,
   },
-  historicalData: generateHistoricalData(), // Generate initial historical data
-  isConnected: false,
+  historicalData: [], // Start with empty historical data
   isSimulating: false,
   isLoading: false,
+  isInitialLoading: true, // Start in initial loading state
   error: null,
   activeFilter: "all",
 };
@@ -58,11 +65,12 @@ const initialSensorState: Omit<
 export const useSensorStore = create<SensorState>((set, get) => ({
   ...initialSensorState,
 
+  // Action for individual updates (polling/simulation)
   setData: (newData) => {
     const now = new Date();
     const currentTimestamp = newData.timestamp ?? now.getTime();
 
-    // Update current data
+    // 1. Update current data only
     const updatedCurrentData = {
       ...get().currentSensorData,
       ...newData,
@@ -70,14 +78,12 @@ export const useSensorStore = create<SensorState>((set, get) => ({
     };
     set({
       currentSensorData: updatedCurrentData,
-      error: null,
-      isLoading: false,
-    }); // Clear error on new data
+      error: null, // Clear error on new data
+      isLoading: false, // Stop polling loading indicator
+    });
 
-    // Update historical data
+    // 2. Prepare and append to historical data
     const newHistoricalPoint: HistoricalDataPoint = {
-      ...updatedCurrentData, // Use the merged data
-      // Ensure all fields potentially needed by chart are present
       temperature: updatedCurrentData.temperature ?? null,
       humidity: updatedCurrentData.humidity ?? null,
       co2: updatedCurrentData.co2 ?? null,
@@ -87,38 +93,51 @@ export const useSensorStore = create<SensorState>((set, get) => ({
       moisture: updatedCurrentData.moisture ?? null,
       ir: updatedCurrentData.ir ?? null,
       conductivity: updatedCurrentData.conductivity ?? null,
-      camera: updatedCurrentData.camera ?? null, // Should be null if not provided
-      time: now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      camera: updatedCurrentData.camera ?? null,
+      imageUrl: updatedCurrentData.imageUrl ?? null,
+      // Generate time string for the chart
+      time: new Date(currentTimestamp).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
       timestamp: currentTimestamp,
     };
 
     set((state) => ({
       historicalData: [
-        ...state.historicalData.slice(-1440 + 1),
+        ...state.historicalData.slice(-MAX_HISTORICAL_POINTS + 1), // Limit size
         newHistoricalPoint,
-      ], // Keep approx last 24h assuming 1min interval, adjust as needed
+      ],
     }));
   },
 
-  startLoading: () => set({ isLoading: true, error: null }), // Clear error when starting load
-  stopLoading: () => set({ isLoading: false }),
-  setError: (error) => set({ error, isLoading: false }), // Stop loading on error
-  setConnected: (status) =>
+  // Action for setting the initial historical data load
+  setHistoricalData: (data) => {
+    // Also set the most recent point from historical as the initial current data
+    const latestPoint = data.length > 0 ? data[data.length - 1] : null;
     set({
-      isConnected: status,
-      isSimulating: status ? false : get().isSimulating,
-      isLoading: false,
-    }), // Can't be connected and simulating
+      historicalData: data.slice(-MAX_HISTORICAL_POINTS), // Limit initial load too
+      isInitialLoading: false,
+      error: null,
+      // Set current data based on the latest historical point if available
+      currentSensorData: latestPoint
+        ? { ...get().currentSensorData, ...latestPoint }
+        : get().currentSensorData,
+    });
+  },
+
+  startLoading: () => set({ isLoading: true, error: null }),
+  stopLoading: () => set({ isLoading: false }),
+  // setError should perhaps differentiate between initial load error and polling error?
+  // For now, it sets the general error and stops the polling loading indicator.
+  setError: (error) =>
+    set({ error, isLoading: false, isInitialLoading: false }),
   setSimulating: (status) =>
     set({
       isSimulating: status,
-      isConnected: status ? false : get().isConnected,
-      isLoading: false,
-    }), // Can't be simulating and connected
+      isLoading: false, // Stop polling loading when simulating
+      isInitialLoading: false, // Ensure initial loading stops if simulation starts before it finishes
+    }),
   setActiveFilter: (filter) => set({ activeFilter: filter }),
   resetState: () => set(initialSensorState), // Reset to initial values
 }));
-
-// Helper function - move generateHistoricalData here or to a dedicated utils file
-// For now, assuming it's moved to '../utils/mockData'
-// You'll need to create 'web/src/utils/mockData.ts' and move the function there.
