@@ -8,7 +8,7 @@ const char* password = "Aysyw2ch?";
 // --- ------------------------------------ ---
 
 // --- Replace with your Cloudflare Worker Endpoint URL ---
-const char* serverUrl = "YOUR_CLOUDFLARE_WORKER_URL";
+const char* serverUrl = "https://cloudflare-server.kyeshimizu.workers.dev/readings";
 // --- ------------------------------------------------ ---
 
 unsigned long lastRequestTime = 0;
