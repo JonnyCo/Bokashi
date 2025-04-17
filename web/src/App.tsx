@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Droplets,
   Leaf,
@@ -23,36 +24,30 @@ import { Badge } from "@/components/ui/badge";
 import SensorChart from "@/components/sensor-chart";
 import CameraModule from "@/components/camera-module";
 
-import type { SensorData, HistoricalDataPoint } from "./types";
+import type { SensorData } from "./types";
+import { useSensorStore } from "./store/sensorStore"; // Import Zustand store
 import * as simService from "./services/simulationService";
+// import * as btService from './services/bluetoothService'; // Keep for future implementation
 
-// Mock historical data generation
-const generateHistoricalData = (hours = 24): HistoricalDataPoint[] => {
-  const data: HistoricalDataPoint[] = [];
+// --- Mock API Fetch --- (Replace with actual fetch later)
+const fetchSensorData = async (): Promise<Partial<SensorData>> => {
+  // Simulate network delay
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  // Simulate fetching data from an API endpoint
+  // In a real scenario, this would be: `fetch('/api/sensor-data').then(res => res.json())`
+  // For now, let's return a mock data point similar to the simulation
   const now = new Date();
-
-  for (let i = hours; i >= 0; i--) {
-    const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-    data.push({
-      time: time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      temperature: Math.round((22 + Math.sin(i / 3) * 4) * 10) / 10,
-      humidity: Math.round((65 + Math.sin(i / 4) * 15) * 10) / 10,
-      co2: Math.round((400 + Math.sin(i / 6) * 100) * 10) / 10,
-      o2: Math.round((20.9 + Math.sin(i / 8) * 0.5) * 10) / 10,
-      ph: Math.round((6.5 + Math.sin(i / 5) * 0.5) * 10) / 10,
-      pressure: Math.round((1013 + Math.sin(i / 7) * 10) * 10) / 10,
-      moisture: Math.round((40 + Math.sin(i / 4) * 20) * 10) / 10,
-      ir: Math.round((500 + Math.sin(i / 3) * 200) * 10) / 10,
-      conductivity: Math.round((1.2 + Math.sin(i / 5) * 0.4) * 100) / 100,
-      timestamp: time.getTime(),
-      camera: null,
-    });
-  }
-
-  return data;
+  return {
+    temperature: Math.round((22 + Math.random() * 8) * 10) / 10,
+    humidity: Math.round((65 + Math.random() * 30) * 10) / 10,
+    co2: Math.round((400 + Math.random() * 200) * 10) / 10,
+    // Add other fields as needed for the API response
+    timestamp: now.getTime(),
+  };
 };
 
-// Camera feed URLs - these would be your actual remote JPG URLs
+// --- Camera Feeds (Keep as is) ---
 const cameraFeeds = [
   {
     id: "main",
@@ -77,153 +72,123 @@ const cameraFeeds = [
 ];
 
 export default function Dashboard() {
-  // State for current sensor readings
-  const [sensorData, setSensorData] = useState<SensorData>({
-    temperature: null,
-    humidity: null,
-    co2: null,
-    o2: null,
-    ph: null,
-    pressure: null,
-    moisture: null,
-    ir: null,
-    conductivity: null,
-    camera: null, // Initialize camera state
-    timestamp: null, // Initialize timestamp state
+  // --- State from Zustand Store ---
+  const {
+    currentSensorData,
+    historicalData,
+    isConnected,
+    isSimulating,
+    isLoading,
+    error,
+    activeFilter,
+    setData,
+    startLoading,
+    stopLoading,
+    setError,
+    setConnected,
+    setSimulating,
+    setActiveFilter,
+  } = useSensorStore((state) => state);
+
+  // --- React Query for Data Polling ---
+  const {
+    data: queryData,
+    error: queryError,
+    isLoading: queryIsLoading,
+  } = useQuery({
+    queryKey: ["sensorData"],
+    queryFn: fetchSensorData,
+    refetchInterval: 5000, // Poll every 5 seconds
+    enabled: !(isConnected || isSimulating), // Only poll if not connected via BT or simulating
+    staleTime: 4000, // Consider data fresh for 4 seconds
   });
 
-  // State for historical chart data
-  const [historicalData, setHistoricalData] = useState<HistoricalDataPoint[]>(
-    generateHistoricalData()
-  );
-  // State for connection/simulation status
-  const [isConnected, setIsConnected] = useState(false); // For actual Bluetooth
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [isLoading, setIsLoading] = useState(false); // Keep for UI feedback during connect/sim start
-  const [error, setError] = useState<string | null>(null);
-  const [activeFilter, setActiveFilter] = useState<string>("all");
+  // --- Effect to update Zustand store from React Query ---
+  useEffect(() => {
+    if (queryData) {
+      // Check if the timestamp is newer than the current one to avoid stale updates
+      // Also ensure queryData.timestamp is not undefined
+      if (
+        queryData.timestamp !== undefined &&
+        (!currentSensorData.timestamp ||
+          queryData.timestamp > currentSensorData.timestamp)
+      ) {
+        setData(queryData);
+      }
+    }
+  }, [queryData, setData, currentSensorData.timestamp]);
 
-  /**
-   * Callback to handle incoming data (from BT or Simulation).
-   * Updates current sensor state and historical data array.
-   */
+  useEffect(() => {
+    if (queryError) {
+      setError(
+        queryError instanceof Error
+          ? queryError.message
+          : "Failed to fetch data"
+      );
+    }
+  }, [queryError, setError]);
+
+  // --- Callback for Simulation/Bluetooth --- (Now uses Zustand actions)
   const handleDataUpdate = useCallback(
     (newData: Partial<SensorData>) => {
-      const now = new Date();
-      const updatedData: SensorData = {
-        // Ensure all fields are present, merging new data over previous
-        temperature: null,
-        humidity: null,
-        co2: null,
-        o2: null,
-        ph: null,
-        pressure: null,
-        moisture: null,
-        ir: null,
-        conductivity: null,
-        camera: null,
-        ...sensorData, // Spread previous state first
-        ...newData, // Spread new incoming data
-        timestamp: newData.timestamp ?? now.getTime(), // Use provided timestamp or generate one
-      };
-
-      setSensorData(updatedData);
-
-      // Update historical data for charts
-      setHistoricalData((prev) => {
-        const newPoint: HistoricalDataPoint = {
-          ...updatedData, // Use the fully populated updatedData
-          time: now.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        };
-        // Keep the last ~24 hours (adjust length as needed)
-        return [...prev.slice(1), newPoint];
-      });
-
-      // TODO: Add call to backend API for logging here if needed
-      // fetch('/api/log', { method: 'POST', body: JSON.stringify(updatedData), ... });
+      setData(newData);
     },
-    [sensorData]
-  ); // Dependency on sensorData to ensure closure has latest state
+    [setData] // Dependency on the Zustand action setter
+  );
 
-  // --- Connection and Simulation Handlers ---
+  // --- Connection and Simulation Handlers (Use Zustand actions) ---
 
   const handleStartSimulation = () => {
     setError(null);
-    setIsLoading(true);
+    startLoading();
     try {
-      // Use the simService, providing the update handler
-      simService.startSimulation(handleDataUpdate, 1500); // Update every 1.5 seconds
-      setIsSimulating(true);
-      setIsConnected(false); // Can't simulate and be connected
-      setIsLoading(false);
+      simService.startSimulation(handleDataUpdate, 1500);
+      setSimulating(true);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to start simulation"
       );
-      setIsSimulating(false);
-      setIsLoading(false);
+      setSimulating(false); // Ensure simulation state is false on error
+      stopLoading(); // Ensure loading is stopped on error
     }
   };
 
   const handleStopSimulation = () => {
     simService.stopSimulation();
-    setIsSimulating(false);
-    // Optionally reset sensor data to null
-    // setSensorData({ ...initialSensorState });
+    setSimulating(false);
+    // Optionally reset sensor data via Zustand action if needed
+    // resetState();
   };
 
-  // Placeholder for actual Bluetooth connection
   const handleConnect = async () => {
     setError(null);
-    setIsLoading(true);
-    alert("Actual Bluetooth connection not implemented yet. Use Simulation.");
+    startLoading();
+    alert(
+      "Actual Bluetooth connection not implemented yet. Use Simulation or Polling."
+    );
+    // Placeholder: In real implementation, update Zustand based on btService result
     // try {
     //   await btService.connect(handleDataUpdate);
-    //   setIsConnected(true);
-    //   setIsSimulating(false);
+    //   setConnected(true);
     // } catch (err) {
     //   setError(err instanceof Error ? err.message : 'Failed to connect');
-    //   setIsConnected(false);
+    //   setConnected(false);
     // } finally {
-    //    setIsLoading(false);
+    //   stopLoading();
     // }
-    setIsLoading(false); // Remove this line when implementing real connection
+    stopLoading(); // Remove this line when implementing real connection
   };
 
   const handleDisconnect = () => {
     // if (isConnected) btService.disconnect(); // Call when implemented
-    setIsConnected(false);
+    setConnected(false);
   };
 
-  // REMOVED: fetchData simulation and related useEffect
-  // The simulation is now handled by simService and triggered by buttons
+  // Combined loading state (can show loading from query or manual actions)
+  const showLoading =
+    isLoading || (queryIsLoading && !isConnected && !isSimulating);
 
-  // --- UI Related ---
-
-  // Define sensor categories for filtering - KEEPING, needed for UI logic
-  // const sensorCategories = {
-  //   environment: ["temperature", "humidity", "co2", "o2", "pressure", "ir"],
-  //   soil: ["moisture", "ph", "conductivity"],
-  // };
-
-  // Helper function to check if a section should be visible based on the active filter
-  // Commented out as it is not used in the current JSX filtering logic
-  // const isVisible = (section: string): boolean => {
-  //   if (activeFilter === "all") return true;
-  //   // Add check for camera filter
-  //   if (activeFilter === 'cameras' && section === 'cameras') return true;
-  //   // Check against sensor categories
-  //   if (activeFilter === 'environment' && sensorCategories.environment.some(s => section.toLowerCase().includes(s))) return true;
-  //   if (activeFilter === 'soil' && sensorCategories.soil.some(s => section.toLowerCase().includes(s))) return true;
-
-  //   // A simple check based on top-level card sections might be needed depending on exact structure
-  //   // This is a basic implementation, might need refinement based on how sections are defined in the JSX
-  //   return activeFilter === section;
-  // };
-
+  // --- UI --- (Remains largely the same, reads from Zustand state)
   return (
     <div className="flex min-h-screen w-full flex-col bg-muted/40">
       <div className="flex-1">
@@ -235,6 +200,14 @@ export default function Dashboard() {
               </h1>
               <p className="text-muted-foreground">
                 Real-time sensor data and camera feeds from your automated farm
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Status:{" "}
+                {isConnected
+                  ? "Connected (BT)"
+                  : isSimulating
+                  ? "Simulating"
+                  : "Polling API"}
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -270,6 +243,7 @@ export default function Dashboard() {
               <div className="ml-auto flex gap-2">
                 {!(isConnected || isSimulating) ? (
                   <>
+                    {/* Connect Button remains for future BT implementation */}
                     <Button
                       variant="outline"
                       size="sm"
@@ -284,6 +258,7 @@ export default function Dashboard() {
                       )}
                       Connect BT
                     </Button>
+                    {/* Simulate Button */}
                     <Button
                       variant="outline"
                       size="sm"
@@ -298,6 +273,10 @@ export default function Dashboard() {
                       )}
                       Simulate
                     </Button>
+                    {/* Display Loading indicator for polling if applicable */}
+                    {queryIsLoading && !isLoading && (
+                      <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+                    )}
                   </>
                 ) : (
                   <>
@@ -332,7 +311,7 @@ export default function Dashboard() {
 
           {error && <p className="text-red-600 mb-4">Error: {error}</p>}
 
-          {/* Key Metrics Section */}
+          {/* Key Metrics Section - Reads from currentSensorData (Zustand) */}
           {(activeFilter === "all" ||
             activeFilter === "environment" ||
             activeFilter === "soil") && (
@@ -353,9 +332,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.temperature !== null
-                          ? `${sensorData.temperature}°C`
-                          : "Loading..."}
+                        {currentSensorData.temperature !== null &&
+                        currentSensorData.temperature !== undefined
+                          ? `${currentSensorData.temperature}°C`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 18-26°C
@@ -376,9 +358,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.humidity !== null
-                          ? `${sensorData.humidity}%`
-                          : "Loading..."}
+                        {currentSensorData.humidity !== null &&
+                        currentSensorData.humidity !== undefined
+                          ? `${currentSensorData.humidity}%`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 50-80%
@@ -399,9 +384,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.co2 !== null
-                          ? `${sensorData.co2} ppm`
-                          : "Loading..."}
+                        {currentSensorData.co2 !== null &&
+                        currentSensorData.co2 !== undefined
+                          ? `${currentSensorData.co2} ppm`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 350-500 ppm
@@ -422,9 +410,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.o2 !== null
-                          ? `${sensorData.o2}%`
-                          : "Loading..."}
+                        {currentSensorData.o2 !== null &&
+                        currentSensorData.o2 !== undefined
+                          ? `${currentSensorData.o2}%`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 20-21%
@@ -433,8 +424,7 @@ export default function Dashboard() {
                   </Card>
                 </>
               )}
-
-              {/* Soil Sensors */}
+              {/* Soil Sensors */} {/* Read from currentSensorData */}
               {(activeFilter === "all" || activeFilter === "soil") && (
                 <>
                   <Card>
@@ -446,9 +436,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.moisture !== null
-                          ? `${sensorData.moisture}%`
-                          : "Loading..."}
+                        {currentSensorData.moisture !== null &&
+                        currentSensorData.moisture !== undefined
+                          ? `${currentSensorData.moisture}%`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 30-60%
@@ -465,9 +458,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.ph !== null
-                          ? `${sensorData.ph}`
-                          : "Loading..."}
+                        {currentSensorData.ph !== null &&
+                        currentSensorData.ph !== undefined
+                          ? `${currentSensorData.ph}`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 6.0-7.0
@@ -484,9 +480,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.conductivity !== null
-                          ? `${sensorData.conductivity} mS/cm`
-                          : "Loading..."}
+                        {currentSensorData.conductivity !== null &&
+                        currentSensorData.conductivity !== undefined
+                          ? `${currentSensorData.conductivity} mS/cm`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 0.8-1.6 mS/cm
@@ -503,9 +502,12 @@ export default function Dashboard() {
                     </CardHeader>
                     <CardContent>
                       <div className="text-2xl font-bold">
-                        {sensorData.ir !== null
-                          ? `${sensorData.ir} W/m²`
-                          : "Loading..."}
+                        {currentSensorData.ir !== null &&
+                        currentSensorData.ir !== undefined
+                          ? `${currentSensorData.ir} W/m²`
+                          : showLoading
+                          ? "Loading..."
+                          : "N/A"}
                       </div>
                       <p className="text-xs text-muted-foreground">
                         Optimal range: 300-700 W/m²
@@ -517,11 +519,13 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Charts Section - Reads from historicalData (Zustand) */}
           {/* Environment Sensor Charts */}
           {(activeFilter === "all" || activeFilter === "environment") && (
             <div className="mb-8">
               <h2 className="text-xl font-bold mb-4">Environment Sensors</h2>
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {/* Pass historicalData from Zustand store to charts */}
                 <Card>
                   <CardHeader>
                     <CardTitle>Temperature (24h)</CardTitle>
