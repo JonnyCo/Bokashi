@@ -196,5 +196,107 @@ app.post('/readings', async (c) => {
 	}
 });
 
+// POST /image - Upload an image to R2 and add to ImageTable
+app.post('/image', async (c) => {
+	const db = c.get('db');
+	const bucket = c.env.IMAGE_BUCKET;
+
+	if (!bucket) {
+		console.error("R2 Bucket binding 'IMAGE_BUCKET' not found.");
+		return c.json({ success: false, error: 'R2 bucket binding not configured.' }, 500);
+	}
+
+	try {
+		const formData = await c.req.formData();
+		const imageFile = formData.get('image') as File | null;
+
+		if (!imageFile || !(imageFile instanceof File)) {
+			return c.json({ success: false, error: "'image' field (File) is required." }, 400);
+		}
+
+		// Generate a timestamp-based filename
+		const timestamp = Date.now();
+		const fileExtension = imageFile.name.split('.').pop() || 'jpg';
+		const uniqueKey = `${timestamp}.${fileExtension}`;
+
+		// Upload image to R2
+		await bucket.put(uniqueKey, imageFile.stream(), {
+			httpMetadata: { contentType: imageFile.type },
+		});
+
+		// Generate the URL for the image
+		// Note: You'll need to configure R2 for public access or use a signed URL approach
+		// This is a placeholder URL format - adjust according to your R2 bucket configuration
+		const imageUrl = uniqueKey;
+
+		// Insert record into ImageTable
+		const result = await db
+			.insert(schema.ImageTable)
+			.values({
+				imageUrl: imageUrl,
+				// timestamp will be automatically set by the default SQL function
+			})
+			.returning({ insertedId: schema.ImageTable.id });
+
+		if (result && result.length > 0 && result[0].insertedId) {
+			return c.json(
+				{
+					success: true,
+					insertedId: result[0].insertedId,
+					imageUrl: imageUrl,
+					timestamp: timestamp,
+				},
+				201,
+			);
+		} else {
+			// Attempt to clean up the uploaded image if DB insert fails
+			try {
+				await bucket.delete(uniqueKey);
+				console.log(`Cleaned up uploaded image ${uniqueKey} after DB insert failure.`);
+			} catch (deleteError) {
+				console.error(`Failed to clean up image ${uniqueKey} after DB failure:`, deleteError);
+			}
+
+			return c.json({ success: false, error: 'Failed to insert image data into database.' }, 500);
+		}
+	} catch (e: any) {
+		console.error('Error processing POST /image request:', e);
+		return c.json({ success: false, error: `Server error: ${e.message || 'Unknown error'}` }, 500);
+	}
+});
+
+// GET /images - Get all images from newest to oldest
+app.get('/images', async (c) => {
+	const db = c.get('db');
+
+	try {
+		const allImages = await db.select().from(schema.ImageTable).orderBy(desc(schema.ImageTable.timestamp)).all();
+
+		return c.json({ success: true, data: allImages });
+	} catch (e: any) {
+		console.error('Error fetching all images:', e);
+		return c.json({ success: false, error: `Failed to fetch images: ${e.message}` }, 500);
+	}
+});
+
+// GET /images/latest - Get only the latest image
+app.get('/images/latest', async (c) => {
+	const db = c.get('db');
+
+	try {
+		const latestImage = await db.select().from(schema.ImageTable).orderBy(desc(schema.ImageTable.timestamp)).limit(1).get();
+
+		// If no images exist yet
+		if (!latestImage) {
+			return c.json({ success: true, data: null });
+		}
+
+		return c.json({ success: true, data: latestImage });
+	} catch (e: any) {
+		console.error('Error fetching latest image:', e);
+		return c.json({ success: false, error: `Failed to fetch latest image: ${e.message}` }, 500);
+	}
+});
+
 // Default export Hono fetch handler
 export default app;
