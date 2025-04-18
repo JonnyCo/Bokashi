@@ -199,22 +199,6 @@ const cameraFeeds = [
   {
     id: "main",
     name: "Main Growing Area",
-    url: "/placeholder.svg?height=360&width=640&text=Main+Growing+Area",
-  },
-  {
-    id: "seedling",
-    name: "Seedling Station",
-    url: "/placeholder.svg?height=360&width=640&text=Seedling+Station",
-  },
-  {
-    id: "irrigation",
-    name: "Irrigation System",
-    url: "/placeholder.svg?height=360&width=640&text=Irrigation+System",
-  },
-  {
-    id: "exterior",
-    name: "Exterior View",
-    url: "/placeholder.svg?height=360&width=640&text=Exterior+View",
   },
 ];
 
@@ -933,10 +917,7 @@ export default function Dashboard() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="h-80">
-                      <CameraModule
-                        imageUrl={camera.url}
-                        location={camera.name}
-                      />
+                      <CameraModule location={camera.name} />
                     </CardContent>
                   </Card>
                 ))}

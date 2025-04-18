@@ -29,9 +29,17 @@ type HonoEnv = {
 // Initialize Hono App with the combined HonoEnv type
 const app = new Hono<HonoEnv>();
 
-// Add CORS middleware (Allow all origins by default)
-// For production, configure specific origins: cors({ origin: 'https://yourdomain.com' })
-app.use('*', cors());
+// Add CORS middleware with more explicit configuration for file uploads
+app.use(
+	'*',
+	cors({
+		origin: '*', // Allow any origin
+		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+		allowHeaders: ['Content-Type', 'Authorization'],
+		exposeHeaders: ['Content-Length', 'Content-Type'],
+		maxAge: 86400, // 24 hours
+	}),
+);
 
 // Add logger middleware
 app.use('*', logger());
@@ -131,8 +139,8 @@ app.post('/readings', async (c) => {
 				await bucket.put(uniqueKey, imageFile.stream(), {
 					httpMetadata: { contentType: imageFile.type },
 				});
-				// Store the key for now. Configure R2 public access as needed.
-				imageUrl = uniqueKey;
+				// Store the full URL with domain prefix
+				imageUrl = `https://bokashi.kyeshimizu.com/${uniqueKey}`;
 			} catch (uploadError: any) {
 				console.error(`Failed to upload image ${uniqueKey} to R2:`, uploadError);
 				return c.json({ success: false, error: `Image upload failed: ${uploadError.message}` }, 500);
@@ -201,67 +209,171 @@ app.post('/image', async (c) => {
 	const db = c.get('db');
 	const bucket = c.env.IMAGE_BUCKET;
 
+	console.log('Processing /image request');
+	console.log('Content-Type:', c.req.header('content-type'));
+	console.log('Content-Length:', c.req.header('content-length'));
+
 	if (!bucket) {
 		console.error("R2 Bucket binding 'IMAGE_BUCKET' not found.");
 		return c.json({ success: false, error: 'R2 bucket binding not configured.' }, 500);
 	}
 
 	try {
-		const formData = await c.req.formData();
-		const imageFile = formData.get('image') as File | null;
-
-		if (!imageFile || !(imageFile instanceof File)) {
-			return c.json({ success: false, error: "'image' field (File) is required." }, 400);
+		// Check content type
+		const contentType = c.req.header('content-type') || '';
+		if (!contentType.includes('multipart/form-data')) {
+			console.error(`Invalid content type: ${contentType}`);
+			return c.json(
+				{
+					success: false,
+					error: 'Content-Type must be multipart/form-data',
+					receivedContentType: contentType,
+				},
+				400,
+			);
 		}
+
+		// Parse form data with detailed error handling
+		let formData;
+		try {
+			formData = await c.req.formData();
+			console.log('Form data parsed successfully');
+		} catch (formError: any) {
+			console.error('Failed to parse form data:', formError);
+			return c.json(
+				{
+					success: false,
+					error: `Failed to parse multipart form data: ${formError.message}`,
+					hint: 'Check that your form is using the correct content type and boundary format',
+				},
+				400,
+			);
+		}
+
+		// Get image file
+		const imageFile = formData.get('image') as File | null;
+		if (!imageFile) {
+			console.error("No 'image' field found in form data");
+			const formFields = Array.from(formData.entries()).map((entry) => entry[0]);
+			return c.json(
+				{
+					success: false,
+					error: "'image' field is missing from form data",
+					availableFields: formFields,
+				},
+				400,
+			);
+		}
+
+		if (!(imageFile instanceof File)) {
+			console.error("'image' field is not a File object");
+			return c.json(
+				{
+					success: false,
+					error: "'image' field must be a file",
+					receivedType: typeof imageFile,
+				},
+				400,
+			);
+		}
+
+		console.log(`Processing image: ${imageFile.name}, size: ${imageFile.size} bytes, type: ${imageFile.type}`);
 
 		// Generate a timestamp-based filename
 		const timestamp = Date.now();
 		const fileExtension = imageFile.name.split('.').pop() || 'jpg';
 		const uniqueKey = `${timestamp}.${fileExtension}`;
+		console.log(`Generated unique key: ${uniqueKey}`);
 
-		// Upload image to R2
-		await bucket.put(uniqueKey, imageFile.stream(), {
-			httpMetadata: { contentType: imageFile.type },
-		});
-
-		// Generate the URL for the image
-		// Note: You'll need to configure R2 for public access or use a signed URL approach
-		// This is a placeholder URL format - adjust according to your R2 bucket configuration
-		const imageUrl = uniqueKey;
-
-		// Insert record into ImageTable
-		const result = await db
-			.insert(schema.ImageTable)
-			.values({
-				imageUrl: imageUrl,
-				// timestamp will be automatically set by the default SQL function
-			})
-			.returning({ insertedId: schema.ImageTable.id });
-
-		if (result && result.length > 0 && result[0].insertedId) {
+		// Upload image to R2 with explicit error handling
+		try {
+			await bucket.put(uniqueKey, imageFile.stream(), {
+				httpMetadata: { contentType: imageFile.type },
+			});
+			console.log(`Successfully uploaded image to R2 with key: ${uniqueKey}`);
+		} catch (uploadError: any) {
+			console.error(`R2 upload failed for ${uniqueKey}:`, uploadError);
 			return c.json(
 				{
-					success: true,
-					insertedId: result[0].insertedId,
-					imageUrl: imageUrl,
-					timestamp: timestamp,
+					success: false,
+					error: `Failed to upload to storage: ${uploadError.message}`,
+					key: uniqueKey,
 				},
-				201,
+				500,
 			);
-		} else {
-			// Attempt to clean up the uploaded image if DB insert fails
+		}
+
+		// Generate the URL for the image with domain prefix
+		const imageUrl = `https://bokashi.kyeshimizu.com/${uniqueKey}`;
+		console.log(`Image URL: ${imageUrl}`);
+
+		// Insert record into ImageTable
+		try {
+			const result = await db
+				.insert(schema.ImageTable)
+				.values({
+					imageUrl: imageUrl,
+					// timestamp will be automatically set by the default SQL function
+				})
+				.returning({ insertedId: schema.ImageTable.id });
+
+			if (result && result.length > 0 && result[0].insertedId) {
+				console.log(`Successfully inserted image record with ID: ${result[0].insertedId}`);
+				return c.json(
+					{
+						success: true,
+						insertedId: result[0].insertedId,
+						imageUrl: imageUrl,
+						timestamp: timestamp,
+					},
+					201,
+				);
+			} else {
+				console.error('Database insert failed:', result);
+				// Clean up the uploaded image
+				try {
+					await bucket.delete(uniqueKey);
+					console.log(`Cleaned up uploaded image ${uniqueKey} after DB insert failure.`);
+				} catch (deleteError: any) {
+					console.error(`Failed to clean up image ${uniqueKey} after DB failure:`, deleteError);
+				}
+
+				return c.json(
+					{
+						success: false,
+						error: 'Failed to insert image data into database.',
+					},
+					500,
+				);
+			}
+		} catch (dbError: any) {
+			console.error('Database error:', dbError);
+			// Clean up the uploaded image
 			try {
 				await bucket.delete(uniqueKey);
-				console.log(`Cleaned up uploaded image ${uniqueKey} after DB insert failure.`);
-			} catch (deleteError) {
-				console.error(`Failed to clean up image ${uniqueKey} after DB failure:`, deleteError);
+				console.log(`Cleaned up uploaded image ${uniqueKey} after DB error.`);
+			} catch (deleteError: any) {
+				console.error(`Failed to clean up image ${uniqueKey} after DB error:`, deleteError);
 			}
 
-			return c.json({ success: false, error: 'Failed to insert image data into database.' }, 500);
+			return c.json(
+				{
+					success: false,
+					error: `Database error: ${dbError.message}`,
+				},
+				500,
+			);
 		}
 	} catch (e: any) {
-		console.error('Error processing POST /image request:', e);
-		return c.json({ success: false, error: `Server error: ${e.message || 'Unknown error'}` }, 500);
+		console.error('Unhandled error in POST /image request:', e);
+		return c.json(
+			{
+				success: false,
+				error: `Server error: ${e.message || 'Unknown error'}`,
+				stack: e.stack,
+			},
+			500,
+		);
 	}
 });
 
@@ -287,11 +399,16 @@ app.get('/images/latest', async (c) => {
 		const latestImage = await db.select().from(schema.ImageTable).orderBy(desc(schema.ImageTable.timestamp)).limit(1).get();
 
 		// If no images exist yet
-		if (!latestImage) {
+		if (!latestImage || !latestImage.imageUrl) {
 			return c.json({ success: true, data: null });
 		}
 
-		return c.json({ success: true, data: latestImage });
+		const image = await fetch(latestImage.imageUrl);
+		const imageBlob = await image.blob();
+		const imageBuffer = await imageBlob.arrayBuffer();
+		const imageBase64 = Buffer.from(imageBuffer).toString('base64');
+
+		return c.json({ success: true, data: { ...latestImage, imageBase64 } });
 	} catch (e: any) {
 		console.error('Error fetching latest image:', e);
 		return c.json({ success: false, error: `Failed to fetch latest image: ${e.message}` }, 500);
