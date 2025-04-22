@@ -21,11 +21,16 @@ const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 0;
 const int daylightOffset_sec = 0;
 
+// Image compression settings
+const int JPEG_QUALITY = 20;        // Lower value = higher compression (0-63)
+const framesize_t FRAME_SIZE = FRAMESIZE_SVGA; // Lower resolution for better compression
+
 // Function prototypes
 void initCamera();
 bool captureImage(const char* filename);
 bool uploadToApi(const char* filename);
 String getTimestamp();
+void cleanupSPIFFS();
 
 unsigned long lastCaptureTime = 0;
 const unsigned long captureInterval = 10000; // 10 seconds
@@ -49,6 +54,9 @@ void setup() {
   Serial.printf("Space used: %u bytes\n", usedBytes);
   Serial.printf("Free space: %u bytes\n", totalBytes - usedBytes);
 
+  // Clean up any previously stored files
+  cleanupSPIFFS();
+  
   // Initialize camera
   initCamera();
 
@@ -90,6 +98,13 @@ void loop() {
       } else {
         Serial.println("Upload failed");
       }
+      
+      // Clean up the file regardless of upload success to avoid filling SPIFFS
+      if (SPIFFS.remove(filename)) {
+        Serial.printf("File %s removed after upload\n", filename.c_str());
+      } else {
+        Serial.printf("Failed to remove file %s\n", filename.c_str());
+      }
     } else {
       Serial.println("Failed to capture image");
     }
@@ -117,20 +132,19 @@ void initCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_VGA;
+  config.frame_size = FRAME_SIZE; // Use the defined frame size for better compression
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
+  config.jpeg_quality = JPEG_QUALITY; // Use the defined JPEG quality for better compression
   config.fb_count = 1;
   
   // Check for PSRAM
   if(psramFound()) {
-    config.jpeg_quality = 10;
     config.fb_count = 2;
     config.grab_mode = CAMERA_GRAB_LATEST;
   } else {
-    config.frame_size = FRAMESIZE_SVGA;
+    config.frame_size = FRAMESIZE_SVGA; // Fallback to smaller size if no PSRAM
     config.fb_location = CAMERA_FB_IN_DRAM;
   }
 
@@ -151,8 +165,14 @@ void initCamera() {
     s->set_saturation(s, -2);
   }
   
-  // Set frame size for better image quality
-  s->set_framesize(s, FRAMESIZE_VGA);
+  // Additional settings for better compression
+  s->set_quality(s, JPEG_QUALITY);
+  s->set_framesize(s, FRAME_SIZE);
+  s->set_contrast(s, 0);      // Reduce contrast for smaller file size
+  s->set_sharpness(s, 0);     // Reduce sharpness for smaller file size
+  
+  Serial.printf("Camera configured with frame size: %d, JPEG quality: %d\n", 
+                FRAME_SIZE, JPEG_QUALITY);
 }
 
 bool captureImage(const char* filename) {
@@ -345,4 +365,43 @@ String getTimestamp() {
   char buffer[30];
   strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &timeinfo);
   return String(buffer);
+}
+
+// Function to clean up all files in SPIFFS
+void cleanupSPIFFS() {
+  Serial.println("Cleaning up SPIFFS...");
+  
+  File root = SPIFFS.open("/");
+  if (!root || !root.isDirectory()) {
+    Serial.println("Failed to open root directory");
+    return;
+  }
+  
+  File file = root.openNextFile();
+  int filesRemoved = 0;
+  
+  while (file) {
+    String filename = file.name();
+    file.close();
+    
+    // Skip system files (those that start with ".")
+    if (!filename.startsWith(".")) {
+      if (SPIFFS.remove(filename)) {
+        Serial.printf("Removed file: %s\n", filename.c_str());
+        filesRemoved++;
+      } else {
+        Serial.printf("Failed to remove file: %s\n", filename.c_str());
+      }
+    }
+    
+    file = root.openNextFile();
+  }
+  
+  root.close();
+  Serial.printf("SPIFFS cleanup complete. %d files removed.\n", filesRemoved);
+  
+  // Print updated SPIFFS status
+  uint32_t totalBytes = SPIFFS.totalBytes();
+  uint32_t usedBytes = SPIFFS.usedBytes();
+  Serial.printf("SPIFFS Status after cleanup: %u/%u bytes used\n", usedBytes, totalBytes);
 } 
