@@ -61,7 +61,7 @@ export default function SensorChart({
           label={label}
           payload={payload}
           labelFormatter={(value) => `Time: ${value}`}
-          formatter={(value, name, item, index) => (
+          formatter={(value, _, item, index) => (
             <div className="flex items-center justify-between gap-2 w-full">
               <div className="flex items-center gap-1.5">
                 <span
