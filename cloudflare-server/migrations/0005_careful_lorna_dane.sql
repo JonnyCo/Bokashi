@@ -1,0 +1,1 @@
+ALTER TABLE `SensorReadings` DROP COLUMN `conductivity`;

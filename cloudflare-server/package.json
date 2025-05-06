@@ -10,6 +10,7 @@
 		"cf-typegen": "wrangler types",
 		"gen": "drizzle-kit generate",
 		"migrate": "npx wrangler d1 migrations apply bokashi-db --remote",
+		"pull": "drizzle-kit pull",
 		"push": "drizzle-kit push",
 		"studio": "drizzle-kit studio",
 		"db:seed": "tsx seed.ts"

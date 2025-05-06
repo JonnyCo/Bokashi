@@ -15,6 +15,34 @@
       "when": 1744998658797,
       "tag": "0001_pretty_sage",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1745966134906,
+      "tag": "0002_cynical_violations",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1746235299629,
+      "tag": "0003_crazy_vulture",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1746541635048,
+      "tag": "0004_petite_cobalt_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1746541702854,
+      "tag": "0005_careful_lorna_dane",
+      "breakpoints": true
     }
   ]
 }

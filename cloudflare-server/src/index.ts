@@ -95,7 +95,7 @@ app.get('/readings/latest', async (c) => {
 	}
 });
 
-// POST /readings - Insert new sensor reading (handles JSON and multipart/form-data)
+// POST /readings - Insert new sensor reading (handles application/x-www-form-urlencoded data)
 app.post('/readings', async (c) => {
 	const db = c.get('db');
 	const contentType = c.req.header('content-type') || '';
@@ -104,59 +104,29 @@ app.post('/readings', async (c) => {
 		let sensorData: Partial<schema.InsertSensorReading>;
 		let imageUrl: string | null = null;
 
-		// --- Handle multipart/form-data (Image + Sensor Data) ---
-		if (contentType.includes('multipart/form-data')) {
-			const bucket = c.env.IMAGE_BUCKET;
-			if (!bucket) {
-				console.error("R2 Bucket binding 'IMAGE_BUCKET' not found.");
-				return c.json({ success: false, error: 'R2 bucket binding not configured.' }, 500);
-			}
-
+		// Handle application/x-www-form-urlencoded
+		if (contentType.includes('application/x-www-form-urlencoded')) {
 			const formData = await c.req.formData();
-			const imageFile = formData.get('image') as File | null;
-			const sensorDataString = formData.get('sensorData') as string | null;
-
-			if (!imageFile || !(imageFile instanceof File)) {
-				return c.json({ success: false, error: "'image' field (File) is required in multipart/form-data." }, 400);
-			}
-			if (!sensorDataString) {
-				return c.json({ success: false, error: "'sensorData' field (JSON string) is required in multipart/form-data." }, 400);
-			}
-
-			// Parse sensor data from string
-			try {
-				sensorData = JSON.parse(sensorDataString);
-				if (!sensorData || Object.keys(sensorData).length === 0 || Object.values(sensorData).every((v) => v === undefined || v === null)) {
-					return c.json({ success: false, error: 'Invalid or empty sensor data provided in sensorData field.' }, 400);
-				}
-			} catch (e) {
-				return c.json({ success: false, error: 'Invalid JSON in sensorData field.' }, 400);
-			}
-
-			// Upload image
-			const uniqueKey = `${Date.now()}-${imageFile.name}`;
-			try {
-				await bucket.put(uniqueKey, imageFile.stream(), {
-					httpMetadata: { contentType: imageFile.type },
-				});
-				// Store the full URL with domain prefix
-				imageUrl = `https://bokashi.kyeshimizu.com/${uniqueKey}`;
-			} catch (uploadError: any) {
-				console.error(`Failed to upload image ${uniqueKey} to R2:`, uploadError);
-				return c.json({ success: false, error: `Image upload failed: ${uploadError.message}` }, 500);
-			}
-
-			// --- Handle application/json (Sensor Data only) ---
-		} else if (contentType.includes('application/json')) {
-			sensorData = await c.req.json<Partial<schema.InsertSensorReading>>();
-			if (!sensorData || Object.keys(sensorData).length === 0 || Object.values(sensorData).every((v) => v === undefined || v === null)) {
-				return c.json({ success: false, error: 'No sensor data provided in JSON body.' }, 400);
-			}
-			// imageUrl remains null
-
-			// --- Handle other content types ---
+			sensorData = {
+				// Map BMP280 sensor data
+				temperature: formData.get('bmp280_temp') ? parseFloat(formData.get('bmp280_temp') as string) : null,
+				pressure: formData.get('bmp280_press') ? parseFloat(formData.get('bmp280_press') as string) : null,
+				// Map DHT11 sensor data
+				humidity: formData.get('dht11_humd') ? parseFloat(formData.get('dht11_humd') as string) : null,
+				// Map SGP30 sensor data
+				co2: formData.get('sgp30_eco2') ? parseFloat(formData.get('sgp30_eco2') as string) : null,
+				// Map ENS160 sensor data
+				o2: formData.get('ens160_aqi') ? parseFloat(formData.get('ens160_aqi') as string) : null,
+				// Map thermistor data
+				ir: formData.get('therm_temp') ? parseFloat(formData.get('therm_temp') as string) : null,
+				// Set other fields to null as they're not provided
+			};
 		} else {
-			return c.json({ success: false, error: 'Unsupported Content-Type. Use application/json or multipart/form-data.' }, 415);
+			return c.json({ success: false, error: 'Content-Type must be application/x-www-form-urlencoded' }, 400);
+		}
+
+		if (!sensorData || Object.keys(sensorData).length === 0 || Object.values(sensorData).every((v) => v === undefined || v === null)) {
+			return c.json({ success: false, error: 'No sensor data provided in form data.' }, 400);
 		}
 
 		// --- Database Insert (Common logic) ---
@@ -167,12 +137,8 @@ app.post('/readings', async (c) => {
 				humidity: sensorData.humidity ?? null,
 				co2: sensorData.co2 ?? null,
 				o2: sensorData.o2 ?? null,
-				ph: sensorData.ph ?? null,
 				pressure: sensorData.pressure ?? null,
-				moisture: sensorData.moisture ?? null,
 				ir: sensorData.ir ?? null,
-				conductivity: sensorData.conductivity ?? null,
-				imageUrl: imageUrl, // Will be null for JSON, or the key for multipart
 			})
 			.returning({ insertedId: schema.sensorReadings.id });
 
@@ -195,10 +161,6 @@ app.post('/readings', async (c) => {
 			return c.json({ success: false, error: 'Failed to insert data into database.' }, 500);
 		}
 	} catch (e: any) {
-		// Catch JSON parsing errors specifically for application/json requests
-		if (contentType.includes('application/json') && e instanceof SyntaxError) {
-			return c.json({ success: false, error: 'Invalid JSON in request body.' }, 400);
-		}
 		console.error('Error processing POST /readings request:', e);
 		return c.json({ success: false, error: `Server error: ${e.message || 'Unknown error'}` }, 500);
 	}
