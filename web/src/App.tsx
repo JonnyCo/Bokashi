@@ -372,11 +372,18 @@ export default function Dashboard() {
           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">
-                Farm Monitoring Dashboard
+                FoodCam2Farm
               </h1>
               <p className="text-muted-foreground">
-                Real-time sensor data and camera feeds from your automated farm
+                The FoodCam2Farm system democratizes sustainable waste
+                management by making advanced fermentation technology accessible
+                to everyday citizens. By transforming food waste processing from
+                an industrial operation to a community-scale activity, it
+                creates new opportunities for direct citizen participation in
+                climate solutions.
               </p>
+
+              <p className="text-muted-foreground"></p>
               {/* Updated Status Line */}
               <p className="text-xs text-muted-foreground mt-1">
                 Status:{" "}
@@ -438,48 +445,6 @@ export default function Dashboard() {
               >
                 Cameras
               </Badge>
-
-              <div className="ml-auto flex gap-2">
-                {/* Disable simulate button during initial load */}
-                {!isSimulating ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleStartSimulation}
-                      disabled={initialStatus === "pending" || isLoading}
-                      className="flex items-center gap-1"
-                    >
-                      {isLoading ? (
-                        <RefreshCw className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                      Simulate
-                    </Button>
-                    {/* Show spinner only for polling loading, not initial */}
-                    {pollingIsLoading &&
-                      !isLoading &&
-                      initialStatus !== "pending" && (
-                        <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
-                      )}
-                  </>
-                ) : (
-                  <>
-                    {isSimulating && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleStopSimulation}
-                        className="flex items-center gap-1"
-                      >
-                        <Square className="h-4 w-4" />
-                        Stop Sim
-                      </Button>
-                    )}
-                  </>
-                )}
-              </div>
             </div>
           </div>
 
